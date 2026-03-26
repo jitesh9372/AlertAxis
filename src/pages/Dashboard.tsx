@@ -47,11 +47,27 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const flashIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const oscillatorRef = useRef<OscillatorNode | null>(null);
+  const sirenIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const stopFlashlight = useCallback(() => {
+  const stopSOS = useCallback(() => {
     if (flashIntervalRef.current) {
       clearInterval(flashIntervalRef.current);
       flashIntervalRef.current = null;
+    }
+    if (sirenIntervalRef.current) {
+      clearInterval(sirenIntervalRef.current);
+      sirenIntervalRef.current = null;
+    }
+    if (oscillatorRef.current) {
+      try { oscillatorRef.current.stop(); } catch (e) {}
+      oscillatorRef.current.disconnect();
+      oscillatorRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(console.error);
+      audioCtxRef.current = null;
     }
     if (videoTrackRef.current) {
       try {
@@ -74,9 +90,9 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
   useEffect(() => {
     return () => {
-      stopFlashlight();
+      stopSOS();
     };
-  }, [stopFlashlight]);
+  }, [stopSOS]);
 
   const t = translations[currentLanguage];
 
@@ -440,7 +456,34 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
   const handleSOS = useCallback(async () => {
     setIsSOSActive(true);
-    window.location.href = `tel:${APP_CONFIG.EMERGENCY_NUMBERS.GENERAL}`;
+    
+    // Start Audio Siren
+    try {
+      const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioContextCtor();
+      audioCtxRef.current = ctx;
+      
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      osc.type = 'square';
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      gainNode.gain.value = 0.5;
+      osc.start();
+      oscillatorRef.current = osc;
+
+      let isHigh = false;
+      sirenIntervalRef.current = setInterval(() => {
+        if (oscillatorRef.current) {
+          oscillatorRef.current.frequency.setValueAtTime(isHigh ? 800 : 600, ctx.currentTime);
+          isHigh = !isHigh;
+        }
+      }, 500);
+    } catch (e) {
+      console.error('Audio siren not supported', e);
+    }
 
     let hasTorch = false;
     try {
@@ -679,18 +722,27 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
               </h3>
               <p className="text-white/70 text-sm mb-6">
                 {isSOSActive 
-                  ? 'Flashlight is blinking. Help is on the way.' 
-                  : 'Instantly trigger an alert and call emergency services.'}
+                  ? 'Flashlight and siren activated. Help is on the way.' 
+                  : 'Instantly trigger a loud siren and flashlight.'}
               </p>
               
               {isSOSActive ? (
-                <button 
-                  onClick={stopFlashlight}
-                  className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 border border-emerald-400"
-                >
-                  <CheckCircle2 className="w-6 h-6" />
-                  I am safe
-                </button>
+                <div className="flex flex-col gap-3">
+                  <a 
+                    href={`tel:${APP_CONFIG.EMERGENCY_NUMBERS.GENERAL}`}
+                    className="w-full py-4 bg-white text-red-600 rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+                  >
+                    <Phone className="w-6 h-6" />
+                    Call Now
+                  </a>
+                  <button 
+                    onClick={stopSOS}
+                    className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 border border-emerald-400"
+                  >
+                    <CheckCircle2 className="w-6 h-6" />
+                    I am safe
+                  </button>
+                </div>
               ) : (
                 <button 
                   onClick={handleSOS}

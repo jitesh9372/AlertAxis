@@ -8,15 +8,21 @@
 
 @layer base {
   body {
-    @apply bg-white text-slate-900 antialiased transition-colors duration-500;
-    background-image: radial-gradient(circle at top right, rgba(239, 68, 68, 0.03), transparent 40%),
-                      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.03), transparent 40%);
+    @apply text-slate-900 antialiased transition-colors duration-500;
+    background-color: #f8fafc;
+    background-image: linear-gradient(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.8)), url('/bg-texture.jpg');
+    background-size: cover;
+    background-attachment: fixed;
+    background-position: center;
   }
   
   .dark body {
-    @apply bg-slate-950 text-slate-50;
-    background-image: radial-gradient(circle at top right, rgba(239, 68, 68, 0.07), transparent 40%),
-                      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.07), transparent 40%);
+    @apply text-slate-50;
+    background-color: #0f172a;
+    background-image: linear-gradient(rgba(15, 23, 42, 0.8), rgba(15, 23, 42, 0.95)), url('/bg-texture.jpg');
+    background-size: cover;
+    background-attachment: fixed;
+    background-position: center;
   }
 
   button, a {

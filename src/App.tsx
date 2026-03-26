@@ -436,7 +436,7 @@ const Home = ({
   return (
     <>
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4 bg-white dark:bg-slate-950 relative overflow-hidden transition-colors">
+      <section className="pt-32 pb-20 px-4 relative overflow-hidden transition-colors">
         <div className="absolute top-0 right-0 -translate-y-1/2 translate-x-1/4 w-[500px] h-[500px] bg-red-500/5 dark:bg-red-500/10 rounded-full blur-[120px] pointer-events-none" />
         <div className="absolute bottom-0 left-0 translate-y-1/2 -translate-x-1/4 w-[500px] h-[500px] bg-blue-500/5 dark:bg-blue-500/10 rounded-full blur-[120px] pointer-events-none" />
 
@@ -571,7 +571,7 @@ const Home = ({
       </section>
 
       {/* Features Section */}
-      <section id="features" className="py-24 px-4 bg-white dark:bg-slate-950 transition-colors">
+      <section id="features" className="py-24 px-4 transition-colors">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-4">{t.safetyFeatures}</h2>
@@ -613,7 +613,7 @@ const Home = ({
       </section>
 
       {/* How It Works */}
-      <section id="how-it-works" className="py-24 px-4 bg-slate-50 dark:bg-slate-900/50 transition-colors">
+      <section id="how-it-works" className="py-24 px-4 transition-colors">
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
             <div>
@@ -656,7 +656,7 @@ const Home = ({
       </section>
 
       {/* Emergency Form */}
-      <section id="emergency-form" className="py-24 px-4 bg-white dark:bg-slate-950 transition-colors">
+      <section id="emergency-form" className="py-24 px-4 transition-colors">
         <div className="max-w-3xl mx-auto">
           <div className="glass-card p-8 md:p-12 rounded-[40px] border-primary/10">
             <div className="text-center mb-10">
@@ -744,7 +744,7 @@ const Home = ({
       </section>
 
       {/* ICE Contacts Section */}
-      <section id="ice-contacts" className="py-24 px-4 bg-slate-50 dark:bg-slate-900/50 transition-colors">
+      <section id="ice-contacts" className="py-24 px-4 transition-colors">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">{t.iceContacts}</h2>
@@ -867,7 +867,7 @@ const Home = ({
       </AnimatePresence>
 
       {/* FAQ Section */}
-      <section className="py-24 px-4 bg-white dark:bg-slate-950 transition-colors">
+      <section className="py-24 px-4 transition-colors">
         <div className="max-w-3xl mx-auto">
           <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-12 text-center">{t.faqTitle}</h2>
           <div className="space-y-4">
@@ -1000,59 +1000,6 @@ export default function App() {
       </div>
     );
   };
-
-  const MobileEmergencyBar = React.memo(({ handleSOS, isSirenActive, handleSiren, isFlashActive, handleFlash }: { 
-    handleSOS: () => void, 
-    isSirenActive: boolean, 
-    handleSiren: () => void, 
-    isFlashActive: boolean, 
-    handleFlash: () => void 
-  }) => {
-    return (
-      <div className="md:hidden fixed top-0 left-0 right-0 z-[60] px-4 py-2 pointer-events-none">
-        <div className="max-w-md mx-auto bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl text-slate-900 dark:text-white p-3 rounded-2xl shadow-2xl flex items-center justify-between pointer-events-auto border border-slate-200 dark:border-white/10">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center animate-sos shadow-lg shadow-red-500/20">
-              <Shield className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="font-black uppercase tracking-tighter text-[10px] text-slate-900 dark:text-white">Emergency Mode</p>
-              <p className="text-[8px] opacity-60 font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Quick Access Active</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => window.location.href = `tel:${APP_CONFIG.EMERGENCY_NUMBERS.GENERAL}`}
-              className="p-2 bg-slate-100 dark:bg-white/10 rounded-xl hover:bg-slate-200 dark:hover:bg-white/20 transition-colors"
-              title="Call 112"
-            >
-              <Phone className="w-4 h-4 text-primary" />
-            </button>
-            <button 
-              onClick={handleSiren}
-              className={cn("p-2 rounded-xl transition-all", isSirenActive ? "bg-primary text-white shadow-lg shadow-red-500/30" : "bg-slate-100 dark:bg-white/10 text-slate-400 dark:text-white/60")}
-              title="Siren"
-            >
-              <Volume2 className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={handleFlash}
-              className={cn("p-2 rounded-xl transition-all", isFlashActive ? "bg-yellow-400 text-white shadow-lg shadow-yellow-400/30" : "bg-slate-100 dark:bg-white/10 text-slate-400 dark:text-white/60")}
-              title="Flash"
-            >
-              <Zap className="w-4 h-4" />
-            </button>
-            <button 
-              onClick={handleSOS}
-              className="px-4 py-2 bg-primary text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-primary/90 transition-all shadow-lg shadow-red-500/20 active:scale-95"
-            >
-              SOS
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  });
 
   useEffect(() => {
     // Check initial session
@@ -1410,13 +1357,7 @@ export default function App() {
           currentLanguage={language}
           setLanguage={setLanguage}
         />
-        <MobileEmergencyBar 
-          handleSOS={handleSOS}
-          isSirenActive={isSirenActive}
-          handleSiren={handleSiren}
-          isFlashActive={isFlashActive}
-          handleFlash={handleFlash}
-        />
+
         <SirenPlayer active={isSirenActive || !!activeAlertId} />
         <Chatbot currentLanguage={language} />
         

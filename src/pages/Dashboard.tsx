@@ -50,6 +50,7 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
   const audioCtxRef = useRef<AudioContext | null>(null);
   const oscillatorRef = useRef<OscillatorNode | null>(null);
   const sirenIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
 
   const stopSOS = useCallback(() => {
     if (flashIntervalRef.current) {
@@ -83,6 +84,9 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
           videoTrackRef.current = null;
         }
       }, 100);
+    }
+    if (videoElementRef.current) {
+      videoElementRef.current.srcObject = null;
     }
     setIsSOSActive(false);
     setIsScreenFlashOn(false);
@@ -487,19 +491,36 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
     let hasTorch = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      });
-      const track = stream.getVideoTracks()[0];
-      const capabilities = track.getCapabilities() as any;
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: 'environment' } }
+        });
+      } catch (e) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' }
+        });
+      }
       
-      if (capabilities.torch) {
-        videoTrackRef.current = track;
+      if (videoElementRef.current) {
+        videoElementRef.current.srcObject = stream;
+        videoElementRef.current.play().catch(console.error);
+      }
+
+      const track = stream.getVideoTracks()[0];
+      videoTrackRef.current = track;
+      
+      try {
+        await track.applyConstraints({ advanced: [{ torch: true }] });
         hasTorch = true;
-        await track.applyConstraints({ advanced: [{ torch: true }] }).catch(console.error);
-      } else {
-        console.log('Torch not supported on this device');
-        track.stop();
+      } catch (e) {
+        console.log('Torch initial activation failed', e);
+        const capabilities = track.getCapabilities ? track.getCapabilities() : {} as any;
+        if (capabilities.torch) {
+          hasTorch = true;
+        } else {
+          track.stop();
+        }
       }
     } catch (err) {
       console.error('Error accessing flashlight hardware:', err);
@@ -530,6 +551,7 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pt-20 pb-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      <video ref={videoElementRef} autoPlay playsInline muted className="hidden" />
       {/* Screen Flash Overlay */}
       {isScreenFlashOn && (
         <div className="pointer-events-none fixed inset-0 z-[100] bg-red-600/40 border-[8px] sm:border-[16px] border-red-600 transition-none" />

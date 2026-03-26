@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #ef4444; /* red-500 */
+  --color-primary-dark: #dc2626; /* red-600 */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-white text-slate-900 antialiased transition-colors duration-500;
+    background-image: radial-gradient(circle at top right, rgba(239, 68, 68, 0.03), transparent 40%),
+                      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.03), transparent 40%);
+  }
+  
+  .dark body {
+    @apply bg-slate-950 text-slate-50;
+    background-image: radial-gradient(circle at top right, rgba(239, 68, 68, 0.07), transparent 40%),
+                      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.07), transparent 40%);
+  }
+
+  button, a {
+    will-change: transform, opacity;
+    @apply transition-all duration-200;
+  }
+}
+
+.glass-card {
+  @apply bg-white/70 backdrop-blur-xl border border-slate-200/50 shadow-xl shadow-slate-200/40 transition-all duration-300;
+}
+
+.dark .glass-card {
+  @apply bg-slate-900/60 border-slate-800/50 shadow-2xl shadow-black/20;
+}
+
+.sos-glow {
+  box-shadow: 0 0 40px rgba(239, 68, 68, 0.4);
+}
+
+@keyframes pulse-red {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+.animate-sos {
+  animation: pulse-red 2s infinite;
+}

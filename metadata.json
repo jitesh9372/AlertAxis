@@ -1,0 +1,5 @@
+{
+  "name": "AlertAxis",
+  "description": "Instant Emergency Help at Your Fingertips. Trigger alerts, share your location, and contact emergency services instantly.",
+  "requestFramePermissions": ["camera", "microphone", "geolocation"]
+}

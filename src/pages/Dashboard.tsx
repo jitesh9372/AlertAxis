@@ -43,6 +43,7 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
   const [profileData, setProfileData] = useState({ name: '', phone: '' });
   const [profileUpdateStatus, setProfileUpdateStatus] = useState<'idle' | 'loading' | 'success'>('idle');
   const [isSOSActive, setIsSOSActive] = useState(false);
+  const [isScreenFlashOn, setIsScreenFlashOn] = useState(false);
 
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const flashIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -68,6 +69,7 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
       }, 100);
     }
     setIsSOSActive(false);
+    setIsScreenFlashOn(false);
   }, []);
 
   useEffect(() => {
@@ -440,37 +442,39 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
     setIsSOSActive(true);
     window.location.href = `tel:${APP_CONFIG.EMERGENCY_NUMBERS.GENERAL}`;
 
+    let hasTorch = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'environment'
-        }
+        video: { facingMode: 'environment' }
       });
       const track = stream.getVideoTracks()[0];
       const capabilities = track.getCapabilities() as any;
       
       if (capabilities.torch) {
         videoTrackRef.current = track;
-        let isFlashOn = false;
-        
+        hasTorch = true;
         await track.applyConstraints({ advanced: [{ torch: true }] }).catch(console.error);
-        isFlashOn = true;
-
-        flashIntervalRef.current = setInterval(() => {
-          isFlashOn = !isFlashOn;
-          if (videoTrackRef.current) {
-            videoTrackRef.current.applyConstraints({
-              advanced: [{ torch: isFlashOn }]
-            }).catch(console.error);
-          }
-        }, 500);
       } else {
         console.log('Torch not supported on this device');
         track.stop();
       }
     } catch (err) {
-      console.error('Error accessing flashlight:', err);
+      console.error('Error accessing flashlight hardware:', err);
     }
+
+    let isFlashOn = true;
+    setIsScreenFlashOn(true);
+
+    flashIntervalRef.current = setInterval(() => {
+      isFlashOn = !isFlashOn;
+      setIsScreenFlashOn(isFlashOn);
+      
+      if (hasTorch && videoTrackRef.current) {
+        videoTrackRef.current.applyConstraints({
+          advanced: [{ torch: isFlashOn }]
+        }).catch(console.error);
+      }
+    }, 400); // 400ms for strong strobe effect
   }, []);
 
   if (loading) {
@@ -483,6 +487,10 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pt-20 pb-12 px-4 sm:px-6 lg:px-8 transition-colors">
+      {/* Screen Flash Overlay */}
+      {isScreenFlashOn && (
+        <div className="pointer-events-none fixed inset-0 z-[100] bg-red-600/40 border-[8px] sm:border-[16px] border-red-600 transition-none" />
+      )}
       <div className="max-w-7xl mx-auto">
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-8">

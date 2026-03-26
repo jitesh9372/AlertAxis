@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Shield, 
@@ -42,6 +42,39 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
   const [hasPermissions, setHasPermissions] = useState<boolean | null>(null);
   const [profileData, setProfileData] = useState({ name: '', phone: '' });
   const [profileUpdateStatus, setProfileUpdateStatus] = useState<'idle' | 'loading' | 'success'>('idle');
+  const [isSOSActive, setIsSOSActive] = useState(false);
+
+  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const flashIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const stopFlashlight = useCallback(() => {
+    if (flashIntervalRef.current) {
+      clearInterval(flashIntervalRef.current);
+      flashIntervalRef.current = null;
+    }
+    if (videoTrackRef.current) {
+      try {
+        videoTrackRef.current.applyConstraints({
+          advanced: [{ torch: false }]
+        }).catch(console.error);
+      } catch (e) {
+        console.error('Error turning off flashlight', e);
+      }
+      setTimeout(() => {
+        if (videoTrackRef.current) {
+          videoTrackRef.current.stop();
+          videoTrackRef.current = null;
+        }
+      }, 100);
+    }
+    setIsSOSActive(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopFlashlight();
+    };
+  }, [stopFlashlight]);
 
   const t = translations[currentLanguage];
 
@@ -403,8 +436,41 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
     navigate('/signin');
   }, [navigate]);
 
-  const handleSOS = React.useCallback(() => {
+  const handleSOS = useCallback(async () => {
+    setIsSOSActive(true);
     window.location.href = `tel:${APP_CONFIG.EMERGENCY_NUMBERS.GENERAL}`;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment'
+        }
+      });
+      const track = stream.getVideoTracks()[0];
+      const capabilities = track.getCapabilities() as any;
+      
+      if (capabilities.torch) {
+        videoTrackRef.current = track;
+        let isFlashOn = false;
+        
+        await track.applyConstraints({ advanced: [{ torch: true }] }).catch(console.error);
+        isFlashOn = true;
+
+        flashIntervalRef.current = setInterval(() => {
+          isFlashOn = !isFlashOn;
+          if (videoTrackRef.current) {
+            videoTrackRef.current.applyConstraints({
+              advanced: [{ torch: isFlashOn }]
+            }).catch(console.error);
+          }
+        }, 500);
+      } else {
+        console.log('Torch not supported on this device');
+        track.stop();
+      }
+    } catch (err) {
+      console.error('Error accessing flashlight:', err);
+    }
   }, []);
 
   if (loading) {
@@ -596,17 +662,36 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
             </div>
 
             {/* Quick SOS Card */}
-            <div className="bg-primary p-8 rounded-[32px] text-white shadow-2xl shadow-red-200 dark:shadow-none relative overflow-hidden">
+            <div className={`p-8 rounded-[32px] text-white shadow-2xl relative overflow-hidden transition-colors ${
+              isSOSActive ? 'bg-red-600 animate-pulse shadow-red-500/50' : 'bg-primary shadow-red-200 dark:shadow-none'
+            }`}>
               <div className="absolute top-0 right-0 -translate-y-1/4 translate-x-1/4 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
-              <h3 className="text-2xl font-bold mb-2">{t.emergencySOS}</h3>
-              <p className="text-white/70 text-sm mb-6">Instantly trigger an alert and call emergency services.</p>
-              <button 
-                onClick={handleSOS}
-                className="w-full py-4 bg-white text-primary rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
-              >
-                <Shield className="w-6 h-6" />
-                {t.triggerSOS}
-              </button>
+              <h3 className="text-2xl font-bold mb-2">
+                {isSOSActive ? 'SOS ACTIVE' : t.emergencySOS}
+              </h3>
+              <p className="text-white/70 text-sm mb-6">
+                {isSOSActive 
+                  ? 'Flashlight is blinking. Help is on the way.' 
+                  : 'Instantly trigger an alert and call emergency services.'}
+              </p>
+              
+              {isSOSActive ? (
+                <button 
+                  onClick={stopFlashlight}
+                  className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 border border-emerald-400"
+                >
+                  <CheckCircle2 className="w-6 h-6" />
+                  I am safe
+                </button>
+              ) : (
+                <button 
+                  onClick={handleSOS}
+                  className="w-full py-4 bg-white text-primary rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3"
+                >
+                  <Shield className="w-6 h-6" />
+                  {t.triggerSOS}
+                </button>
+              )}
             </div>
           </div>
 

@@ -42,7 +42,8 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyB6qnn8tLK32Rjl3p6w03IPcSkjIKx9n_c";
+      const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
         model: "gemini-1.5-flash",
         contents: [
@@ -64,7 +65,7 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
       setMessages(prev => [...prev, { role: 'bot', content: botResponse }]);
     } catch (error) {
       console.error("Chatbot error:", error);
-      const isKeyPresent = !!import.meta.env.VITE_GEMINI_API_KEY;
+      const isKeyPresent = !!(import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyB6qnn8tLK32Rjl3p6w03IPcSkjIKx9n_c");
       const errorMessage = error instanceof Error ? error.message : String(error);
       setMessages(prev => [...prev, { role: 'bot', content: `Connection error (Key present: ${isKeyPresent}): ${errorMessage}. Please check console for details.` }]);
     } finally {

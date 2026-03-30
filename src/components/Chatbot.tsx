@@ -45,7 +45,7 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyB6qnn8tLK32Rjl3p6w03IPcSkjIKx9n_c";
       const ai = new GoogleGenAI({ apiKey });
       const response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-2.0-flash",
         contents: [
           {
             role: "user",

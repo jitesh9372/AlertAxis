@@ -1,47 +1,181 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { MessageSquare, X, Send, Loader2, Shield, AlertTriangle } from 'lucide-react';
+import { MessageSquare, X, Send, Loader2, Shield, AlertTriangle, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI } from '@google/genai';
 import { cn } from '../lib/utils';
 import { translations, Language } from '../i18n/translations';
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Types
+───────────────────────────────────────────────────────────────────────────── */
 interface Message {
   role: 'user' | 'bot';
   content: string;
   isError?: boolean;
+  provider?: 'gemini' | 'ai';
 }
 
 interface ChatbotProps {
   currentLanguage: Language;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Constants
+───────────────────────────────────────────────────────────────────────────── */
 const LANG_MAP: Record<string, string> = { hi: 'Hindi', mr: 'Marathi', en: 'English' };
 
-// ── Simple in-memory response cache (saves quota on repeated questions) ───────
-const responseCache = new Map<string, string>();
+const SYSTEM_PROMPT = `You are a helpful, friendly AI assistant integrated into AlertAxis — a 24/7 emergency response and safety app.
+You can answer ANY question the user asks: general knowledge, math, safety tips, first aid, emergencies, or casual conversation.
+Be warm, concise (2–4 sentences), and helpful. Always respond in the same language the user writes in.
+If someone is in immediate danger, tell them to press the SOS button or call 112 immediately.`;
 
-// ── Per-session rate limit: max 10 messages per minute ───────────────────────
-const sentTimestamps: number[] = [];
-function isRateLimited(): number {
+/* ─────────────────────────────────────────────────────────────────────────────
+   Simple response cache (avoids hitting the API for identical questions)
+───────────────────────────────────────────────────────────────────────────── */
+const cache = new Map<string, string>();
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Per-session rate limit  (max 15 msgs / minute)
+───────────────────────────────────────────────────────────────────────────── */
+const sentAt: number[] = [];
+function checkRateLimit(): number {
   const now = Date.now();
-  // Drop timestamps older than 1 minute
-  while (sentTimestamps.length > 0 && now - sentTimestamps[0] > 60_000) {
-    sentTimestamps.shift();
-  }
-  if (sentTimestamps.length >= 10) {
-    return Math.ceil((60_000 - (now - sentTimestamps[0])) / 1000);
-  }
+  while (sentAt.length && now - sentAt[0] > 60_000) sentAt.shift();
+  if (sentAt.length >= 15) return Math.ceil((60_000 - (now - sentAt[0])) / 1000);
   return 0;
 }
 
-// ── Exponential backoff sleep ─────────────────────────────────────────────────
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-const SYSTEM_PROMPT = `You are a friendly, knowledgeable 24/7 Safety Assistant for AlertAxis, an emergency response app.
-You can answer ANY question the user asks — safety tips, general knowledge, first aid, emergency procedures, and more.
-Be helpful, warm, and conversational. Keep responses concise (2-4 sentences).
-If someone is in immediate danger, always tell them to press the SOS button or call 112 immediately.`;
+/* ─────────────────────────────────────────────────────────────────────────────
+   Provider 1 — Google Gemini  (tries gemini-1.5-flash first, then 2.0-flash)
+───────────────────────────────────────────────────────────────────────────── */
+async function callGemini(
+  history: { role: string; text: string }[],
+  userMessage: string,
+  lang: string
+): Promise<string> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw Object.assign(new Error('NO_KEY'), { isNoKey: true });
 
+  // Try models in order — flash-8b has the highest free quota
+  const models = ['gemini-1.5-flash-8b', 'gemini-1.5-flash', 'gemini-2.0-flash'];
+
+  for (const model of models) {
+    try {
+      const contents = [
+        { role: 'user', parts: [{ text: SYSTEM_PROMPT }] },
+        { role: 'model', parts: [{ text: 'Got it! Ready to help.' }] },
+        ...history.map(h => ({ role: h.role, parts: [{ text: h.text }] })),
+        { role: 'user', parts: [{ text: `Respond in ${lang}. ${userMessage}` }] },
+      ];
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents,
+            generationConfig: { maxOutputTokens: 400, temperature: 0.7 },
+          }),
+        }
+      );
+
+      if (res.status === 429) {
+        // Try next model
+        console.warn(`[Gemini] ${model} → 429, trying next model...`);
+        continue;
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw Object.assign(new Error(err?.error?.message ?? `HTTP ${res.status}`), { status: res.status });
+      }
+
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return text;
+      throw new Error('Empty response');
+    } catch (e: unknown) {
+      const err = e as { status?: number; isNoKey?: boolean };
+      if (err?.isNoKey) throw e; // don't retry
+      if (model === models[models.length - 1]) throw e; // last model failed
+      // otherwise continue to next model
+    }
+  }
+  throw new Error('All Gemini models quota exceeded');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Provider 2 — Pollinations.ai  (100% free, no API key, CORS enabled)
+   Uses open-source LLMs (Llama 3, Mistral, etc.)
+───────────────────────────────────────────────────────────────────────────── */
+async function callPollinations(
+  history: { role: string; text: string }[],
+  userMessage: string,
+  lang: string
+): Promise<string> {
+  const messages = [
+    { role: 'system', content: `${SYSTEM_PROMPT}\nAlways respond in ${lang}.` },
+    ...history.map(h => ({ role: h.role === 'model' ? 'assistant' : 'user', content: h.text })),
+    { role: 'user', content: userMessage },
+  ];
+
+  const res = await fetch('https://text.pollinations.ai/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages,
+      model: 'openai',          // routes to an OpenAI-compatible model
+      temperature: 0.7,
+      max_tokens: 400,
+      private: true,            // don't log conversation publicly
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Pollinations error: ${res.status}`);
+
+  // Pollinations returns plain text
+  const text = await res.text();
+  if (!text?.trim()) throw new Error('Empty response from Pollinations');
+  return text.trim();
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Main AI caller:  Gemini → Pollinations fallback
+───────────────────────────────────────────────────────────────────────────── */
+async function getAIResponse(
+  history: { role: string; text: string }[],
+  userMessage: string,
+  lang: string
+): Promise<{ text: string; provider: 'gemini' | 'ai' }> {
+  // 1. Try Gemini
+  try {
+    const text = await callGemini(history, userMessage, lang);
+    return { text, provider: 'gemini' };
+  } catch (geminiErr) {
+    console.warn('[Gemini] Failed, switching to Pollinations.ai…', geminiErr);
+  }
+
+  // 2. Fallback: Pollinations.ai (no key, always free)
+  let retries = 2;
+  let delay = 800;
+  while (retries-- > 0) {
+    try {
+      const text = await callPollinations(history, userMessage, lang);
+      return { text, provider: 'ai' };
+    } catch (e) {
+      if (retries === 0) throw e;
+      await sleep(delay);
+      delay *= 2;
+    }
+  }
+  throw new Error('All providers failed');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Component
+───────────────────────────────────────────────────────────────────────────── */
 export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -52,8 +186,7 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
   const [retryCountdown, setRetryCountdown] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Keep full chat history for multi-turn context
-  const historyRef = useRef<{ role: 'user' | 'model'; text: string }[]>([]);
+  const historyRef = useRef<{ role: string; text: string }[]>([]);
 
   const t = translations[currentLanguage];
   const lang = LANG_MAP[currentLanguage] || 'English';
@@ -62,128 +195,56 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
 
-  // Clean up countdown timer on unmount
   useEffect(() => () => { if (countdownRef.current) clearInterval(countdownRef.current); }, []);
 
   const startCountdown = useCallback((seconds: number) => {
     setRetryCountdown(seconds);
     if (countdownRef.current) clearInterval(countdownRef.current);
     countdownRef.current = setInterval(() => {
-      setRetryCountdown(prev => {
-        if (prev <= 1) { clearInterval(countdownRef.current!); return 0; }
-        return prev - 1;
-      });
+      setRetryCountdown(p => { if (p <= 1) { clearInterval(countdownRef.current!); return 0; } return p - 1; });
     }, 1000);
   }, []);
 
-  const addBotMessage = (content: string, isError = false) => {
-    setMessages(prev => [...prev, { role: 'bot', content, isError }]);
-  };
-
-  const callGeminiWithRetry = async (userMessage: string): Promise<string> => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) throw new Error('NO_KEY');
-
-    const ai = new GoogleGenAI({ apiKey });
-    let delay = 1000;
-
-    for (let attempt = 0; attempt <= 3; attempt++) {
-      try {
-        // Build contents array: system + full history + new message
-        const contents = [
-          // Inject the system prompt as the first user/model exchange
-          { role: 'user' as const, parts: [{ text: SYSTEM_PROMPT }] },
-          { role: 'model' as const, parts: [{ text: 'Understood! I\'m ready to help.' }] },
-          // Previous conversation turns
-          ...historyRef.current.map(h => ({
-            role: h.role as 'user' | 'model',
-            parts: [{ text: h.text }],
-          })),
-          // The new user message
-          { role: 'user' as const, parts: [{ text: `Answer in ${lang}. ${userMessage}` }] },
-        ];
-
-        const response = await ai.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents,
-          config: { maxOutputTokens: 400, temperature: 0.7 },
-        });
-
-        return response.text ?? '';
-      } catch (err: unknown) {
-        const e = err as { status?: number; message?: string };
-        const status = e?.status;
-
-        if (status === 429 && attempt < 3) {
-          const wait = Math.min(delay + Math.random() * 500, 15000);
-          console.warn(`[Gemini] 429 — retry ${attempt + 1} in ${wait.toFixed(0)}ms`);
-          await sleep(wait);
-          delay *= 2;
-          continue;
-        }
-        throw err;
-      }
-    }
-    throw new Error('Max retries exceeded');
+  const addBot = (content: string, isError = false, provider?: 'gemini' | 'ai') => {
+    setMessages(prev => [...prev, { role: 'bot', content, isError, provider }]);
   };
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || retryCountdown > 0) return;
 
-    // ── Rate limit check ──────────────────────────────────────────────────
-    const waitSec = isRateLimited();
+    const waitSec = checkRateLimit();
     if (waitSec > 0) {
       startCountdown(waitSec);
-      addBotMessage(`⏳ You're sending messages too quickly. Please wait ${waitSec} seconds.`, true);
+      addBot(`⏳ Too many messages. Please wait ${waitSec}s.`, true);
       return;
     }
-    sentTimestamps.push(Date.now());
+    sentAt.push(Date.now());
 
     const userMessage = input.trim();
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setIsLoading(true);
 
-    // ── Cache check ───────────────────────────────────────────────────────
+    // Cache check
     const cacheKey = `${currentLanguage}:${userMessage.toLowerCase()}`;
-    const cached = responseCache.get(cacheKey);
+    const cached = cache.get(cacheKey);
     if (cached) {
-      historyRef.current.push({ role: 'user', text: userMessage });
-      historyRef.current.push({ role: 'model', text: cached });
+      historyRef.current.push({ role: 'user', text: userMessage }, { role: 'model', text: cached });
       setIsLoading(false);
-      addBotMessage(cached);
+      addBot(cached);
       return;
     }
 
     try {
-      const botText = await callGeminiWithRetry(userMessage);
+      const { text, provider } = await getAIResponse(historyRef.current, userMessage, lang);
 
-      if (!botText) {
-        addBotMessage("I couldn't generate a response. Please try again.", true);
-        return;
-      }
+      historyRef.current.push({ role: 'user', text: userMessage }, { role: 'model', text });
+      if (historyRef.current.length > 24) historyRef.current = historyRef.current.slice(-24);
+      cache.set(cacheKey, text);
 
-      // Save to history & cache
-      historyRef.current.push({ role: 'user', text: userMessage });
-      historyRef.current.push({ role: 'model', text: botText });
-      // Keep history manageable (last 20 turns = 10 exchanges)
-      if (historyRef.current.length > 20) historyRef.current = historyRef.current.slice(-20);
-
-      responseCache.set(cacheKey, botText);
-      addBotMessage(botText);
-
-    } catch (err: unknown) {
-      const e = err as { status?: number; message?: string };
-      const status = e?.status;
-
-      if (status === 429) {
-        startCountdown(60);
-        addBotMessage('⏳ The AI quota is currently full. Please try again in about a minute.', true);
-      } else if ((e?.message ?? '').includes('NO_KEY')) {
-        addBotMessage('⚙️ API key not set. Please add VITE_GEMINI_API_KEY to your .env file.', true);
-      } else {
-        addBotMessage("⚠️ Something went wrong. If you're in danger, press the SOS button or call 112.", true);
-      }
+      addBot(text, false, provider);
+    } catch {
+      addBot("⚠️ Our assistant is temporarily unavailable. If you're in danger, press the SOS button or call 112.", true);
     } finally {
       setIsLoading(false);
     }
@@ -199,10 +260,10 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            className="w-[350px] md:w-[400px] h-[500px] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden mb-4"
+            className="w-[350px] md:w-[400px] h-[520px] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden mb-4"
           >
             {/* Header */}
-            <div className="p-4 bg-primary text-white flex items-center justify-between">
+            <div className="p-4 bg-primary text-white flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <Shield className="w-5 h-5" />
                 <span className="font-bold">{t.chatbotTitle}</span>
@@ -217,40 +278,45 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
               {messages.map((msg, i) => (
                 <motion.div
                   key={i}
-                  initial={{ opacity: 0, x: msg.role === 'user' ? 20 : -20, y: 8 }}
-                  animate={{ opacity: 1, x: 0, y: 0 }}
-                  transition={{ duration: 0.25 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
                   className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}
                 >
-                  <div className={cn(
-                    'max-w-[82%] px-4 py-3 rounded-[22px] text-sm shadow-sm',
-                    msg.role === 'user'
-                      ? 'bg-primary text-white rounded-tr-sm'
-                      : msg.isError
-                        ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded-tl-sm border border-amber-200 dark:border-amber-800 flex items-start gap-2'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-tl-sm'
-                  )}>
-                    {msg.isError && msg.role === 'bot' && (
-                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" />
+                  <div className="flex flex-col gap-1 max-w-[82%]">
+                    <div className={cn(
+                      'px-4 py-3 rounded-[20px] text-sm leading-relaxed',
+                      msg.role === 'user'
+                        ? 'bg-primary text-white rounded-tr-sm'
+                        : msg.isError
+                          ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 rounded-tl-sm border border-amber-200 dark:border-amber-700 flex items-start gap-2'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-tl-sm'
+                    )}>
+                      {msg.isError && msg.role === 'bot' && (
+                        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-500" />
+                      )}
+                      <span className="whitespace-pre-wrap">{msg.content}</span>
+                    </div>
+                    {/* Provider badge */}
+                    {msg.role === 'bot' && msg.provider && (
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1 px-1">
+                        <Zap className="w-2.5 h-2.5" />
+                        {msg.provider === 'gemini' ? 'Gemini AI' : 'AI Assistant'}
+                      </span>
                     )}
-                    <span>{msg.content}</span>
                   </div>
                 </motion.div>
               ))}
 
               {/* Typing indicator */}
               {isLoading && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex justify-start"
-                >
-                  <div className="bg-slate-100 dark:bg-slate-800 px-4 py-3 rounded-[22px] rounded-tl-sm flex gap-1 items-center">
-                    {[0, 0.2, 0.4].map((delay, i) => (
+                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex justify-start">
+                  <div className="bg-slate-100 dark:bg-slate-800 px-4 py-3 rounded-[20px] rounded-tl-sm flex gap-1.5 items-center">
+                    {[0, 0.15, 0.3].map((delay, i) => (
                       <motion.div
                         key={i}
-                        animate={{ scale: [1, 1.3, 1], opacity: [0.5, 1, 0.5] }}
-                        transition={{ repeat: Infinity, duration: 0.8, delay }}
+                        animate={{ y: [0, -4, 0] }}
+                        transition={{ repeat: Infinity, duration: 0.6, delay }}
                         className="w-2 h-2 bg-primary rounded-full"
                       />
                     ))}
@@ -261,35 +327,26 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
             </div>
 
             {/* Input */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800">
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 shrink-0">
               {retryCountdown > 0 && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-xs text-amber-500 text-center mb-2 font-medium"
-                >
-                  ⏳ Retry in {retryCountdown}s
-                </motion.p>
+                <p className="text-xs text-amber-500 text-center mb-2 font-medium">⏳ Retry in {retryCountdown}s</p>
               )}
               <div className="flex gap-2">
                 <input
                   type="text"
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
                   placeholder={retryCountdown > 0 ? `Wait ${retryCountdown}s...` : t.chatbotPlaceholder}
                   disabled={isLoading || retryCountdown > 0}
-                  className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-primary outline-none dark:text-white disabled:opacity-50 transition-opacity"
+                  className="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-primary outline-none dark:text-white disabled:opacity-50 transition-opacity"
                 />
                 <button
                   onClick={handleSend}
                   disabled={isSendDisabled}
-                  className="p-2 bg-primary text-white rounded-xl hover:opacity-90 disabled:opacity-40 transition-all active:scale-95"
+                  className="p-2.5 bg-primary text-white rounded-xl hover:opacity-90 disabled:opacity-40 transition-all active:scale-95"
                 >
-                  {isLoading
-                    ? <Loader2 className="w-5 h-5 animate-spin" />
-                    : <Send className="w-5 h-5" />
-                  }
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
                 </button>
               </div>
             </div>
@@ -297,7 +354,7 @@ export const Chatbot: React.FC<ChatbotProps> = ({ currentLanguage }) => {
         )}
       </AnimatePresence>
 
-      {/* FAB Toggle */}
+      {/* FAB */}
       <motion.button
         whileHover={{ scale: 1.1, rotate: 5 }}
         whileTap={{ scale: 0.9 }}

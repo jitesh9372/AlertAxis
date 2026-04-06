@@ -980,26 +980,19 @@ export default function App() {
   const [isSirenActive, setIsSirenActive] = useState(false);
   const [isFlashActive, setIsFlashActive] = useState(false);
   const [location, setLocation] = useState<{ lat: number, lng: number } | null>(null);
+  const [isScreenFlashOn, setIsScreenFlashOn] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const watchIdRef = useRef<number | null>(null);
 
-  // Siren Sound Effect (YouTube Integration)
-  const SirenPlayer = ({ active }: { active: boolean }) => {
-    if (!active) return null;
-    return (
-      <div className="fixed opacity-0 pointer-events-none w-0 h-0 overflow-hidden">
-        <iframe 
-          width="1" 
-          height="1" 
-          src="https://www.youtube.com/embed/aBdKlH1QsiA?autoplay=1&loop=1&playlist=aBdKlH1QsiA" 
-          title="Siren Sound" 
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-        />
-      </div>
-    );
-  };
+  // Siren and Flash Refs
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const oscillatorRef = useRef<OscillatorNode | null>(null);
+  const sirenIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const flashIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     // Check initial session
@@ -1021,60 +1014,127 @@ export default function App() {
     };
   }, []);
 
-  // Flashlight Logic
+  // Siren Logic
   useEffect(() => {
-    let track: MediaStreamTrack | null = null;
-    let stream: MediaStream | null = null;
-    let intervalId: any = null;
-    let isTorchOn = false;
+    if (isSirenActive || activeAlertId) {
+      try {
+        if (!audioCtxRef.current) {
+          const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
+          audioCtxRef.current = new AudioContextCtor();
+        }
+        
+        const osc = audioCtxRef.current.createOscillator();
+        const gainNode = audioCtxRef.current.createGain();
+        
+        osc.type = 'square';
+        osc.connect(gainNode);
+        gainNode.connect(audioCtxRef.current.destination);
+        
+        gainNode.gain.value = 1.0;
+        osc.start();
+        oscillatorRef.current = osc;
 
-    const toggleFlash = async () => {
-      if (isFlashActive) {
+        let isHigh = false;
+        sirenIntervalRef.current = setInterval(() => {
+          if (oscillatorRef.current && audioCtxRef.current) {
+            oscillatorRef.current.frequency.setValueAtTime(isHigh ? 900 : 500, audioCtxRef.current.currentTime);
+            isHigh = !isHigh;
+          }
+        }, 250);
+      } catch (e) {
+        console.error('Audio siren not supported', e);
+      }
+    } else {
+      if (sirenIntervalRef.current) {
+        clearInterval(sirenIntervalRef.current);
+        sirenIntervalRef.current = null;
+      }
+      if (oscillatorRef.current) {
+        try { oscillatorRef.current.stop(); } catch (e) {}
+        oscillatorRef.current.disconnect();
+        oscillatorRef.current = null;
+      }
+    }
+  }, [isSirenActive, activeAlertId]);
+
+  // Flashlight & Screen Flash Logic
+  useEffect(() => {
+    const startFlash = async () => {
+      let isTorchOn = false;
+      let hasHardwareTorch = false;
+      
+      if (isFlashActive || activeAlertId) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment' }
-          });
-          track = stream.getVideoTracks()[0];
-          const capabilities = track.getCapabilities() as any;
-          if (capabilities.torch) {
-            if (activeAlertId) {
-              // Blinking logic for SOS
-              intervalId = setInterval(async () => {
-                isTorchOn = !isTorchOn;
-                try {
-                  await track?.applyConstraints({
-                    advanced: [{ torch: isTorchOn }]
-                  } as any);
-                } catch (e) {
-                  console.error('Blink error:', e);
-                }
-              }, 500);
-            } else {
-              // Steady light for manual toggle
-              await track.applyConstraints({
+          if (!streamRef.current) {
+            try {
+              streamRef.current = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { exact: 'environment' } }
+              });
+            } catch (e) {
+              streamRef.current = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment' }
+              });
+            }
+          }
+          if (streamRef.current) {
+            videoTrackRef.current = streamRef.current.getVideoTracks()[0];
+            const capabilities = videoTrackRef.current.getCapabilities ? videoTrackRef.current.getCapabilities() : {} as any;
+            hasHardwareTorch = !!capabilities.torch;
+          }
+        } catch (e) {
+          console.log('Flashlight hardware access error:', e);
+        }
+
+        if (activeAlertId || isFlashActive) {
+          flashIntervalRef.current = setInterval(async () => {
+            isTorchOn = !isTorchOn;
+            setIsScreenFlashOn(isTorchOn);
+            if (hasHardwareTorch && videoTrackRef.current) {
+              try {
+                await videoTrackRef.current.applyConstraints({
+                  advanced: [{ torch: isTorchOn }]
+                } as any);
+              } catch (e) {}
+            }
+          }, 200);
+        } else {
+          setIsScreenFlashOn(true);
+          if (hasHardwareTorch && videoTrackRef.current) {
+            try {
+              await videoTrackRef.current.applyConstraints({
                 advanced: [{ torch: true }]
               } as any);
-            }
-          } else {
-            console.warn('Torch not supported');
-            setIsFlashActive(false);
+            } catch (e) {}
           }
-        } catch (err) {
-          console.error('Flash error:', err);
-          setIsFlashActive(false);
         }
       } else {
-        if (track) track.stop();
-        if (stream) stream.getTracks().forEach(t => t.stop());
+        if (flashIntervalRef.current) {
+          clearInterval(flashIntervalRef.current);
+          flashIntervalRef.current = null;
+        }
+        setIsScreenFlashOn(false);
+        if (videoTrackRef.current) {
+          try {
+            await videoTrackRef.current.applyConstraints({
+              advanced: [{ torch: false }]
+            } as any);
+          } catch (e) {}
+          videoTrackRef.current.stop();
+          videoTrackRef.current = null;
+        }
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+          streamRef.current = null;
+        }
       }
     };
-
-    toggleFlash();
+    
+    startFlash();
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
-      if (track) track.stop();
-      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (flashIntervalRef.current) {
+        clearInterval(flashIntervalRef.current);
+      }
     };
   }, [isFlashActive, activeAlertId]);
 
@@ -1350,6 +1410,7 @@ export default function App() {
   return (
     <Router>
       <div className="min-h-screen transition-colors">
+        <video ref={el => { if (el) { /* No-op, just to hold reference or we could use a dedicated ref */ } }} autoPlay playsInline muted className="hidden" />
         <Navbar 
           darkMode={darkMode} 
           toggleDarkMode={toggleDarkMode} 
@@ -1358,7 +1419,11 @@ export default function App() {
           setLanguage={setLanguage}
         />
 
-        <SirenPlayer active={isSirenActive || !!activeAlertId} />
+        {/* Screen Flash Overlay */}
+        {isScreenFlashOn && (
+          <div className="pointer-events-none fixed inset-0 z-[100] bg-red-600/40 border-[8px] sm:border-[16px] border-red-600 transition-none" />
+        )}
+        
         <Chatbot currentLanguage={language} />
         
         {/* Global SOS Banner */}

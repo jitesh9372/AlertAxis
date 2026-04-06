@@ -481,10 +481,10 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
       let isHigh = false;
       sirenIntervalRef.current = setInterval(() => {
         if (oscillatorRef.current) {
-          oscillatorRef.current.frequency.setValueAtTime(isHigh ? 800 : 600, ctx.currentTime);
+          oscillatorRef.current.frequency.setValueAtTime(isHigh ? 900 : 500, ctx.currentTime);
           isHigh = !isHigh;
         }
-      }, 500);
+      }, 250);
     } catch (e) {
       console.error('Audio siren not supported', e);
     }
@@ -538,7 +538,7 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
           advanced: [{ torch: isFlashOn }]
         }).catch(console.error);
       }
-    }, 400); // 400ms for strong strobe effect
+    }, 200); // Fast strobe effect
   }, []);
 
   if (loading) {

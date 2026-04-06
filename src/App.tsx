@@ -993,6 +993,7 @@ export default function App() {
   const videoTrackRef = useRef<MediaStreamTrack | null>(null);
   const flashIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     // Check initial session
@@ -1066,26 +1067,33 @@ export default function App() {
       if (isFlashActive || activeAlertId) {
         try {
           if (!streamRef.current) {
+            const constraints = {
+              video: { facingMode: { ideal: 'environment' } },
+              audio: activeAlertId ? true : false // Request audio if SOS is active for recording
+            };
+            
             try {
-              streamRef.current = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { exact: 'environment' } }
-              });
+              streamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
             } catch (e) {
-              streamRef.current = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' }
-              });
+              // Fallback to basic video if ideal environment fails
+              streamRef.current = await navigator.mediaDevices.getUserMedia({ video: true });
             }
           }
-          if (streamRef.current) {
+
+          if (streamRef.current && videoRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+            await videoRef.current.play().catch(() => {});
+            
             videoTrackRef.current = streamRef.current.getVideoTracks()[0];
             const capabilities = videoTrackRef.current.getCapabilities ? videoTrackRef.current.getCapabilities() : {} as any;
             hasHardwareTorch = !!capabilities.torch;
           }
         } catch (e) {
-          console.log('Flashlight hardware access error:', e);
+          console.error('Camera/Flashlight access error:', e);
         }
 
         if (activeAlertId || isFlashActive) {
+          if (flashIntervalRef.current) clearInterval(flashIntervalRef.current);
           flashIntervalRef.current = setInterval(async () => {
             isTorchOn = !isTorchOn;
             setIsScreenFlashOn(isTorchOn);
@@ -1094,7 +1102,9 @@ export default function App() {
                 await videoTrackRef.current.applyConstraints({
                   advanced: [{ torch: isTorchOn }]
                 } as any);
-              } catch (e) {}
+              } catch (e) {
+                // If it fails once, it might be a transient error or hardware limitation
+              }
             }
           }, 200);
         } else {
@@ -1125,6 +1135,9 @@ export default function App() {
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(t => t.stop());
           streamRef.current = null;
+        }
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
         }
       }
     };
@@ -1245,7 +1258,8 @@ export default function App() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+      // If we already have a stream (e.g. from the SOS Flash), reuse it to avoid hardware conflict
+      const stream = streamRef.current || await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       audioChunksRef.current = [];
@@ -1257,7 +1271,10 @@ export default function App() {
       recorder.onstart = () => setIsRecording(true);
       recorder.onstop = async () => {
         setIsRecording(false);
-        stream.getTracks().forEach(track => track.stop());
+        // Only stop tracks if we aren't using the shared SOS stream
+        if (!activeAlertId) {
+          stream.getTracks().forEach(track => track.stop());
+        }
 
         if (audioChunksRef.current.length > 0 && user) {
           const blob = new Blob(audioChunksRef.current, { type: 'video/webm' });
@@ -1410,7 +1427,7 @@ export default function App() {
   return (
     <Router>
       <div className="min-h-screen transition-colors">
-        <video ref={el => { if (el) { /* No-op, just to hold reference or we could use a dedicated ref */ } }} autoPlay playsInline muted className="hidden" />
+        <video ref={videoRef} autoPlay playsInline muted className="hidden" />
         <Navbar 
           darkMode={darkMode} 
           toggleDarkMode={toggleDarkMode} 

@@ -1494,8 +1494,30 @@ export default function App() {
           } />
           <Route path="/signin" element={<SignIn />} />
           <Route path="/signup" element={<SignUp />} />
-          <Route path="/dashboard" element={<Dashboard currentLanguage={language} />} />
-          <Route path="/map" element={<LiveMap />} />
+          <Route path="/dashboard" element={
+            <Dashboard 
+              currentLanguage={language} 
+              activeAlertId={activeAlertId}
+              handleSOS={handleSOS}
+              handleMarkSafe={handleMarkSafe}
+              isRecording={isRecording}
+              isLiveLocationActive={isLiveLocationActive}
+              isSirenActive={isSirenActive}
+              isFlashActive={isFlashActive}
+              isScreenFlashOn={isScreenFlashOn}
+              handleSiren={handleSiren}
+              handleFlash={handleFlash}
+              location={location}
+              startRecording={startRecording}
+              stopRecording={stopRecording}
+            />
+          } />
+          <Route path="/map" element={
+            <LiveMap 
+              activeAlertId={activeAlertId}
+              location={location}
+            />
+          } />
           <Route path="/instagram-report" element={<InstagramReportPage user={user} />} />
         </Routes>
 

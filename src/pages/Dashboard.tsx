@@ -30,7 +30,39 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { translations, Language } from '../i18n/translations';
 
-export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?: Language }) {
+interface DashboardProps {
+  currentLanguage?: Language;
+  activeAlertId: string | null;
+  handleSOS: () => Promise<void>;
+  handleMarkSafe: () => Promise<void>;
+  isRecording: boolean;
+  isLiveLocationActive: boolean;
+  isSirenActive: boolean;
+  isFlashActive: boolean;
+  isScreenFlashOn: boolean;
+  handleSiren: () => void;
+  handleFlash: () => void;
+  location: { lat: number; lng: number } | null;
+  startRecording: (alertId?: string) => Promise<boolean>;
+  stopRecording: () => void;
+}
+
+export default function Dashboard({ 
+  currentLanguage = 'en',
+  activeAlertId,
+  handleSOS,
+  handleMarkSafe,
+  isRecording,
+  isLiveLocationActive,
+  isSirenActive,
+  isFlashActive,
+  isScreenFlashOn,
+  handleSiren,
+  handleFlash,
+  location,
+  startRecording,
+  stopRecording
+}: DashboardProps) {
   const [user, setUser] = useState<any>(null);
   const [activities, setActivities] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
@@ -42,61 +74,9 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
   const [hasPermissions, setHasPermissions] = useState<boolean | null>(null);
   const [profileData, setProfileData] = useState({ name: '', phone: '' });
   const [profileUpdateStatus, setProfileUpdateStatus] = useState<'idle' | 'loading' | 'success'>('idle');
-  const [isSOSActive, setIsSOSActive] = useState(false);
-  const [isScreenFlashOn, setIsScreenFlashOn] = useState(false);
-
-  const videoTrackRef = useRef<MediaStreamTrack | null>(null);
-  const flashIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const oscillatorRef = useRef<OscillatorNode | null>(null);
-  const sirenIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const videoElementRef = useRef<HTMLVideoElement | null>(null);
-
-  const stopSOS = useCallback(() => {
-    if (flashIntervalRef.current) {
-      clearInterval(flashIntervalRef.current);
-      flashIntervalRef.current = null;
-    }
-    if (sirenIntervalRef.current) {
-      clearInterval(sirenIntervalRef.current);
-      sirenIntervalRef.current = null;
-    }
-    if (oscillatorRef.current) {
-      try { oscillatorRef.current.stop(); } catch (e) {}
-      oscillatorRef.current.disconnect();
-      oscillatorRef.current = null;
-    }
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(console.error);
-      audioCtxRef.current = null;
-    }
-    if (videoTrackRef.current) {
-      try {
-        videoTrackRef.current.applyConstraints({
-          advanced: [{ torch: false }]
-        }).catch(console.error);
-      } catch (e) {
-        console.error('Error turning off flashlight', e);
-      }
-      setTimeout(() => {
-        if (videoTrackRef.current) {
-          videoTrackRef.current.stop();
-          videoTrackRef.current = null;
-        }
-      }, 100);
-    }
-    if (videoElementRef.current) {
-      videoElementRef.current.srcObject = null;
-    }
-    setIsSOSActive(false);
-    setIsScreenFlashOn(false);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopSOS();
-    };
-  }, [stopSOS]);
+  
+  // SOS State is now handled via props from App.tsx
+  const isSOSActive = !!activeAlertId;
 
   const t = translations[currentLanguage];
 
@@ -458,88 +438,13 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
     navigate('/signin');
   }, [navigate]);
 
-  const handleSOS = useCallback(async () => {
-    setIsSOSActive(true);
-    
-    // Start Audio Siren
-    try {
-      const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioContextCtor();
-      audioCtxRef.current = ctx;
-      
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      
-      osc.type = 'square';
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      
-      gainNode.gain.value = 0.5;
-      osc.start();
-      oscillatorRef.current = osc;
-
-      let isHigh = false;
-      sirenIntervalRef.current = setInterval(() => {
-        if (oscillatorRef.current) {
-          oscillatorRef.current.frequency.setValueAtTime(isHigh ? 900 : 500, ctx.currentTime);
-          isHigh = !isHigh;
-        }
-      }, 250);
-    } catch (e) {
-      console.error('Audio siren not supported', e);
+  const onTriggerSOS = async () => {
+    if (isSOSActive) {
+      await handleMarkSafe();
+    } else {
+      await handleSOS();
     }
-
-    let hasTorch = false;
-    try {
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { exact: 'environment' } }
-        });
-      } catch (e) {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' }
-        });
-      }
-      
-      if (videoElementRef.current) {
-        videoElementRef.current.srcObject = stream;
-        videoElementRef.current.play().catch(console.error);
-      }
-
-      const track = stream.getVideoTracks()[0];
-      videoTrackRef.current = track;
-      
-      try {
-        await track.applyConstraints({ advanced: [{ torch: true }] });
-        hasTorch = true;
-      } catch (e) {
-        console.log('Torch initial activation failed', e);
-        const capabilities = track.getCapabilities ? track.getCapabilities() : {} as any;
-        if (capabilities.torch) {
-          hasTorch = true;
-        } else {
-          track.stop();
-        }
-      }
-    } catch (err) {
-      console.error('Error accessing flashlight hardware:', err);
-    }
-
-    let isFlashOn = true;
-    setIsScreenFlashOn(true);
-
-    flashIntervalRef.current = setInterval(() => {
-      isFlashOn = !isFlashOn;
-      setIsScreenFlashOn(isFlashOn);
-      
-      if (hasTorch && videoTrackRef.current) {
-        videoTrackRef.current.applyConstraints({
-          advanced: [{ torch: isFlashOn }]
-        }).catch(console.error);
-      }
-    }, 200); // Fast strobe effect
-  }, []);
+  };
 
   if (loading) {
     return (
@@ -551,7 +456,6 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 pt-20 pb-12 px-4 sm:px-6 lg:px-8 transition-colors">
-      <video ref={videoElementRef} autoPlay playsInline muted className="hidden" />
       {/* Screen Flash Overlay */}
       {isScreenFlashOn && (
         <div className="pointer-events-none fixed inset-0 z-[100] bg-red-600/40 border-[8px] sm:border-[16px] border-red-600 transition-none" />
@@ -758,7 +662,7 @@ export default function Dashboard({ currentLanguage = 'en' }: { currentLanguage?
                     Call Now
                   </a>
                   <button 
-                    onClick={stopSOS}
+                    onClick={handleMarkSafe}
                     className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg shadow-lg hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-3 border border-emerald-400"
                   >
                     <CheckCircle2 className="w-6 h-6" />

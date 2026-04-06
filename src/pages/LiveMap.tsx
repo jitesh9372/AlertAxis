@@ -86,10 +86,15 @@ const mapOptions = {
   ]
 };
 
-export default function LiveMap() {
+interface LiveMapProps {
+  activeAlertId: string | null;
+  location: { lat: number; lng: number } | null;
+}
+
+export default function LiveMap({ activeAlertId, location }: LiveMapProps) {
   const navigate = useNavigate();
-  const [center, setCenter] = useState({ lat: 20.5937, lng: 78.9629 }); // Default to India center
-  const [userLocation, setUserLocation] = useState<any>(null);
+  const [center, setCenter] = useState(location || { lat: 20.5937, lng: 78.9629 }); // Default to India center
+  const [userLocation, setUserLocation] = useState<any>(location);
   const [activeAlerts, setActiveAlerts] = useState<any[]>([]);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
